@@ -56,16 +56,20 @@ export async function initSteering(onProgress: (p: LoadProgress) => void): Promi
   if (pre && post) return;
   // Rough byte budget so the bar is steady across the two files.
   const PRE_BYTES = 471 * 1e6, POST_BYTES = 184 * 1e6, TOTAL = PRE_BYTES + POST_BYTES;
-  const report = (base: number, recv: number, stage: string) =>
+  // Download both halves in parallel — per-connection CDN throughput is the
+  // bottleneck (not total bandwidth), so two concurrent streams finish ~30% faster.
+  let recvPre = 0, recvPost = 0;
+  const report = () =>
     onProgress({
-      frac: Math.min(1, (base + recv) / TOTAL),
-      receivedMB: Math.round((base + recv) / 1e6),
+      frac: Math.min(1, (recvPre + recvPost) / TOTAL),
+      receivedMB: Math.round((recvPre + recvPost) / 1e6),
       totalMB: Math.round(TOTAL / 1e6),
-      stage,
+      stage: "Downloading GPT-2 (two halves, in parallel)",
     });
-
-  const preBuf = await fetchWithProgress(PRE_URL, (r) => report(0, r, "Downloading encoder (blocks 0–10)"));
-  const postBuf = await fetchWithProgress(POST_URL, (r) => report(PRE_BYTES, r, "Downloading decoder (block 11 + unembed)"));
+  const [preBuf, postBuf] = await Promise.all([
+    fetchWithProgress(PRE_URL, (r) => { recvPre = r; report(); }),
+    fetchWithProgress(POST_URL, (r) => { recvPost = r; report(); }),
+  ]);
 
   onProgress({ frac: 1, receivedMB: Math.round(TOTAL / 1e6), totalMB: Math.round(TOTAL / 1e6), stage: "Initializing inference sessions" });
   const opts: ort.InferenceSession.SessionOptions = { executionProviders: ["wasm"] };
