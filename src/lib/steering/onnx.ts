@@ -13,8 +13,11 @@ ort.env.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 8);
 // request Origin into Access-Control-Allow-Origin, so the cross-origin fetch
 // works under our COEP:credentialless isolation.
 const HF_BASE = "https://huggingface.co/lapiskasha/gpt2-circular-steering/resolve/main";
-const PRE_URL = `${HF_BASE}/model_pre.onnx`;
-const POST_URL = `${HF_BASE}/model_post.onnx`;
+// int8 per-channel quantized (~169MB total vs 655MB fp32). Round-trips to cosine
+// ~0.997 and the steering lockstep is unchanged (5.6/7) — but the ~4x smaller
+// footprint is what lets it load on phones without OOM-crashing mobile WebKit.
+const PRE_URL = `${HF_BASE}/model_pre_q.onnx`;
+const POST_URL = `${HF_BASE}/model_post_q.onnx`;
 
 export interface LoadProgress {
   /** 0..1 over both model downloads combined. */
@@ -54,27 +57,27 @@ async function fetchWithProgress(
 /** Download + instantiate both halves. Idempotent. */
 export async function initSteering(onProgress: (p: LoadProgress) => void): Promise<void> {
   if (pre && post) return;
-  // Rough byte budget so the bar is steady across the two files.
-  const PRE_BYTES = 471 * 1e6, POST_BYTES = 184 * 1e6, TOTAL = PRE_BYTES + POST_BYTES;
-  // Download both halves in parallel — per-connection CDN throughput is the
-  // bottleneck (not total bandwidth), so two concurrent streams finish ~30% faster.
-  let recvPre = 0, recvPost = 0;
-  const report = () =>
-    onProgress({
-      frac: Math.min(1, (recvPre + recvPost) / TOTAL),
-      receivedMB: Math.round((recvPre + recvPost) / 1e6),
-      totalMB: Math.round(TOTAL / 1e6),
-      stage: "Downloading GPT-2 (two halves, in parallel)",
-    });
-  const [preBuf, postBuf] = await Promise.all([
-    fetchWithProgress(PRE_URL, (r) => { recvPre = r; report(); }),
-    fetchWithProgress(POST_URL, (r) => { recvPost = r; report(); }),
-  ]);
-
-  onProgress({ frac: 1, receivedMB: Math.round(TOTAL / 1e6), totalMB: Math.round(TOTAL / 1e6), stage: "Initializing inference sessions" });
+  const PRE_BYTES = 122 * 1e6, POST_BYTES = 47 * 1e6, TOTAL = PRE_BYTES + POST_BYTES;
   const opts: ort.InferenceSession.SessionOptions = { executionProviders: ["wasm"] };
-  pre = await ort.InferenceSession.create(preBuf, opts);
-  post = await ort.InferenceSession.create(postBuf, opts);
+  let done = 0;
+  const report = (recv: number, stage: string) =>
+    onProgress({
+      frac: Math.min(1, (done + recv) / TOTAL),
+      receivedMB: Math.round((done + recv) / 1e6),
+      totalMB: Math.round(TOTAL / 1e6),
+      stage,
+    });
+
+  // Load each half sequentially and build its session before fetching the next,
+  // so the big ArrayBuffer becomes garbage-collectable immediately. Peak memory
+  // stays near a single model (~120MB) rather than both at once — this is what
+  // keeps it from OOM-crashing on mobile WebKit (iOS Safari / iOS Chrome).
+  pre = await ort.InferenceSession.create(
+    await fetchWithProgress(PRE_URL, (r) => report(r, "Downloading model (1 / 2)")), opts);
+  done = PRE_BYTES;
+  post = await ort.InferenceSession.create(
+    await fetchWithProgress(POST_URL, (r) => report(r, "Downloading model (2 / 2)")), opts);
+  onProgress({ frac: 1, receivedMB: Math.round(TOTAL / 1e6), totalMB: Math.round(TOTAL / 1e6), stage: "Starting up" });
 }
 
 /** Run the encoder once for a prompt → residual stream at blocks.L.hook_resid_pre. */

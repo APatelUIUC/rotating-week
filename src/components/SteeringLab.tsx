@@ -374,7 +374,7 @@ function Loader({ load }: { load: LoadProgress | null }) {
     <div className="mx-auto max-w-[560px] px-6 py-32 text-center">
       <h1 className="serif text-[28px] text-[var(--ink)] mb-2">Loading GPT-2 into your browser</h1>
       <p className="text-[14px] text-[var(--ink-dim)] mb-8">
-        {load?.stage ?? "Fetching constants"} · {load?.receivedMB ?? 0}/{load?.totalMB ?? 655} MB
+        {load?.stage ?? "Fetching constants"} · {load?.receivedMB ?? 0}/{load?.totalMB ?? 169} MB
       </p>
       <div className="h-[3px] rounded-full overflow-hidden" style={{ background: "var(--paper-rule-2)" }}>
         <div className="h-full transition-[width] duration-200" style={{ width: `${pct}%`, background: "var(--accent)" }} />
@@ -454,8 +454,8 @@ function MethodsPanel({ K }: { K: SteerConstants }) {
         <div>
           <h4 className="mono text-[11px] uppercase tracking-[0.12em] text-[var(--ink-faint)] mb-2">Why you can trust it</h4>
           <ul className="space-y-1.5">
-            <li>· split round-trips against TransformerLens to <span className="mono">cosine 0.99999</span> (max-abs-diff ~3e-5).</li>
-            <li>· the in-browser rotation matches the TransformerLens patched result to the same tolerance.</li>
+            <li>· the fp32 split round-trips against TransformerLens to <span className="mono">cosine 0.99999</span>.</li>
+            <li>· the deployed weights are int8-quantized (per-channel) to load on phones — they round-trip to <span className="mono">cosine ~0.997</span>, and the steering behavior is unchanged.</li>
             <li>· steer → prediction-shift tracks for <span className="mono">6/7</span> days (the Sat→Sun→Mon seam is the honest miss).</li>
             <li>· ablating the circle removes <span className="mono">~56%</span> of the successor probability; a matched random plane removes <span className="mono">~0%</span>.</li>
           </ul>
