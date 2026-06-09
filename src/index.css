@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-serif: "Newsreader", ui-serif, Georgia, Cambria, "Times New Roman", serif;
+  --font-mono:  "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-sans:  "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+:root {
+  /* page (cream paper) */
+  --paper:        #f4ede0;
+  --paper-2:      #ece4d3;
+  --paper-rule:   rgba(26, 22, 18, 0.10);
+  --paper-rule-2: rgba(26, 22, 18, 0.18);
+  /* ink */
+  --ink:          #1a1612;
+  --ink-2:        #3a322a;
+  --ink-dim:      #6b5f54;
+  --ink-faint:    #9d9281;
+  /* canvas (framed dark plate) */
+  --canvas:       #14110e;
+  --canvas-rule-2:rgba(244, 237, 224, 0.10);
+  --canvas-ink:   #efe6d4;
+  --canvas-ink-dim: #a89e8d;
+  --canvas-ink-faint: #6b5f54;
+  /* accent (single voice) */
+  --accent:       #d35a4b;
+  --accent-soft:  #e98a78;
+  --accent-deep:  #a13e30;
+  --accent-tint:  rgba(211, 90, 75, 0.10);
+
+  --serif: "Newsreader", ui-serif, Georgia, Cambria, "Times New Roman", serif;
+  --mono:  "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --sans:  "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  color-scheme: light;
+  background: var(--paper);
+  color: var(--ink-2);
+  font: 16px/1.55 var(--sans);
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--paper); }
+
+.mono  { font-family: var(--mono);  font-feature-settings: "tnum" 1, "ss01" 1; }
+.serif { font-family: var(--serif); }
+.sans  { font-family: var(--sans);  }
+
+.h1-display {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: clamp(48px, 6.4vw, 92px);
+  line-height: 1.02;
+  letter-spacing: -0.022em;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+button { font: inherit; color: inherit; background: transparent; border: 0; cursor: pointer; }
+a { color: inherit; }

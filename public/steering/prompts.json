@@ -1,0 +1,74 @@
+{
+  "prompts": [
+    {
+      "text": "Saturday Sunday Monday Tuesday Wednesday",
+      "input_ids": [
+        50256,
+        3909,
+        3502,
+        3321,
+        3431,
+        3583
+      ],
+      "last_day": 2,
+      "baseline_pred": 3,
+      "isolate_score": 6
+    },
+    {
+      "text": "Tuesday Wednesday Thursday Friday Saturday",
+      "input_ids": [
+        50256,
+        3431,
+        3583,
+        3635,
+        3217,
+        3909
+      ],
+      "last_day": 5,
+      "baseline_pred": 6,
+      "isolate_score": 6
+    },
+    {
+      "text": "Sunday Monday Tuesday Wednesday Thursday",
+      "input_ids": [
+        50256,
+        3502,
+        3321,
+        3431,
+        3583,
+        3635
+      ],
+      "last_day": 3,
+      "baseline_pred": 4,
+      "isolate_score": 6
+    },
+    {
+      "text": "Wednesday Thursday Friday Saturday Sunday",
+      "input_ids": [
+        50256,
+        3583,
+        3635,
+        3217,
+        3909,
+        3502
+      ],
+      "last_day": 6,
+      "baseline_pred": 0,
+      "isolate_score": 6
+    },
+    {
+      "text": "Friday Saturday Sunday Monday Tuesday",
+      "input_ids": [
+        50256,
+        3217,
+        3909,
+        3502,
+        3321,
+        3431
+      ],
+      "last_day": 1,
+      "baseline_pred": 2,
+      "isolate_score": 6
+    }
+  ]
+}

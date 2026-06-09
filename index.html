@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rotating the Week — GPT-2's day-of-week circle, live in your browser</title>
+    <meta name="description" content="An interactive recreation of Engels et al.'s circular features: rotate GPT-2's residual stream around the recovered day-of-week circle and watch its next-token prediction advance in lockstep. Real forward passes, fully client-side." />
+
+    <!-- social unfurl -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Rotating the Week" />
+    <meta property="og:description" content="Drag a dial to rotate GPT-2's residual stream around its day-of-week circle — the next-token prediction advances in lockstep. Real GPT-2 forward passes, fully in-browser. A validated reproduction of Engels et al. (2024)." />
+    <meta property="og:image" content="/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Rotating the Week" />
+    <meta name="twitter:description" content="Rotate GPT-2's residual stream around its day-of-week circle and watch succession happen, live in your browser." />
+    <meta name="twitter:image" content="/og.png" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
