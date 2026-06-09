@@ -7,11 +7,14 @@ import DayCircle from "./DayCircle";
 
 type Active = { text: string; input_ids: number[] };
 const GPT2_BOS = 50256;
+const MAX_STEER = 6;
 
 const PAPER_URL = "https://arxiv.org/abs/2405.14860";
 const CODE_URL = "https://github.com/APatelUIUC/rotating-week";
 const AUTHOR_URL = "https://www.akashpa.tel";
 
+const mod7 = (x: number) => ((x % 7) + 7) % 7;
+const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
 const nearestDay = (theta: number, angles: number[]) => {
   let best = 0, bd = Infinity;
   for (let i = 0; i < angles.length; i++) {
@@ -31,7 +34,7 @@ export default function SteeringLab() {
 
   const [active, setActive] = useState<Active | null>(null);
   const [customText, setCustomText] = useState("");
-  const [theta, setTheta] = useState(0);
+  const [steer, setSteer] = useState(0);          // accumulated steering, in days
   const [offPlane, setOffPlane] = useState(0);
   const [pred, setPred] = useState<Prediction | null>(null);
   const [baselinePred, setBaselinePred] = useState<Prediction | null>(null);
@@ -39,7 +42,7 @@ export default function SteeringLab() {
   const [ablation, setAblation] = useState<{ kind: "circle" | "random"; pred: Prediction } | null>(null);
 
   const residRef = useRef<{ resid: Float32Array; seq: number; dModel: number } | null>(null);
-  const job = useRef<{ running: boolean; pending: { theta: number; off: number } | null }>({ running: false, pending: null });
+  const job = useRef<{ running: boolean; pending: { angle: number | null; off: number } | null }>({ running: false, pending: null });
 
   useEffect(() => {
     let alive = true;
@@ -61,23 +64,26 @@ export default function SteeringLab() {
 
   const K_ = K;
 
-  const decode = useCallback(async (th: number, off: number) => {
+  // Run the decoder. angle === null → pristine residual (the natural state, no
+  // intervention); otherwise rotate the in-plane component to `angle`.
+  const decodeAt = useCallback(async (angle: number | null, off: number) => {
     if (!K_ || !residRef.current) return;
-    if (job.current.running) { job.current.pending = { theta: th, off }; return; }
+    if (job.current.running) { job.current.pending = { angle, off }; return; }
     job.current.running = true;
     try {
       const { resid, seq, dModel } = residRef.current;
-      const r = rotateResidual(resid, seq, dModel, K_, th, off);
+      const r = angle === null ? resid : rotateResidual(resid, seq, dModel, K_, angle, off);
       setPred(readPrediction(await runPost(r, seq, dModel), K_));
     } finally {
       job.current.running = false;
       const p = job.current.pending;
-      if (p) { job.current.pending = null; decode(p.theta, p.off); }
+      if (p) { job.current.pending = null; decodeAt(p.angle, p.off); }
     }
   }, [K_]);
 
   useEffect(() => { if (ready && prompts.length && !active) setActive(prompts[0]); }, [ready, prompts, active]);
 
+  // (re)encode + reset to the natural state whenever the prompt changes
   useEffect(() => {
     if (!K_ || !ready || !active) return;
     let alive = true;
@@ -87,24 +93,54 @@ export default function SteeringLab() {
       residRef.current = enc;
       const { angle } = projectAngle(enc.resid, enc.seq, enc.dModel, K_);
       setBaselineAngle(angle);
-      setTheta(angle);
+      setSteer(0);
       setAblation(null);
-      setBaselinePred(readPrediction(await runPost(enc.resid, enc.seq, enc.dModel), K_));
-      decode(angle, offPlane);
+      const natural = readPrediction(await runPost(enc.resid, enc.seq, enc.dModel), K_);
+      if (!alive) return;
+      setBaselinePred(natural);
+      setPred(natural);
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, ready]);
 
-  const onTheta = (th: number) => { setTheta(th); setAblation(null); decode(th, offPlane); };
-  const onOff = (off: number) => { setOffPlane(off); decode(theta, off); };
-  const stepDay = (dir: 1 | -1) => {
-    if (!K_) return;
-    const cur = nearestDay(theta, K_.day_angles_rad);
-    onTheta(K_.day_angles_rad[(cur + dir + K_.days.length) % K_.days.length]);
+  if (err) return <Shell><div className="mono text-[var(--accent)] p-6">{err}</div></Shell>;
+  if (!K_ || !ready || !active) return <Shell><Loader load={load} /></Shell>;
+
+  const angles = K_.day_angles_rad;
+  const baselineDay = nearestDay(baselineAngle, angles);
+  const internalDay = mod7(baselineDay + steer);     // day the model is rotated to read
+  const theta = angles[internalDay];                  // dial position (derived from steer)
+  const refDay = baselinePred?.topDay ?? 0;           // the natural next-word
+  const predDay = pred?.topDay ?? refDay;             // the current next-word
+  const selectedCurated = prompts.findIndex((p) => p.text === active.text);
+  const overallIsDay = pred ? K_.days.some((d) => pred.overallTop.trim() === d) : true;
+
+  const sgn7 = (x: number) => { let d = mod7(x); if (d > 3) d -= 7; return d; };
+  const predShift = sgn7(predDay - refDay);
+  const fmt = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+  const steerLabel = (n: number) => `${n > 0 ? "+" : "−"}${Math.abs(n)} day${Math.abs(n) === 1 ? "" : "s"}`;
+  const tracking = predShift === steer;
+
+  // apply a new steer value: angle is null at 0 (pristine), else the target anchor
+  const applySteer = (s: number) => {
+    const next = clamp(s, -MAX_STEER, MAX_STEER);
+    setSteer(next);
+    setAblation(null);
+    decodeAt(next === 0 ? null : angles[mod7(baselineDay + next)], offPlane);
   };
+  // drag → snap to the nearest day, picking the lap that's closest to the current steer
+  const onDragAngle = (a: number) => {
+    const dd = nearestDay(a, angles);
+    let best = steer, bd = Infinity;
+    for (let k = -MAX_STEER; k <= MAX_STEER; k++) {
+      if (mod7(baselineDay + k) === dd) { const d = Math.abs(k - steer); if (d < bd) { bd = d; best = k; } }
+    }
+    applySteer(best);
+  };
+  const onOff = (off: number) => { setOffPlane(off); decodeAt(steer === 0 ? null : angles[internalDay], off); };
   const runAblation = async (kind: "circle" | "random") => {
-    if (!K_ || !residRef.current) return;
+    if (!residRef.current) return;
     const { resid, seq, dModel } = residRef.current;
     const r = ablateResidual(resid, seq, dModel, K_, kind);
     setAblation({ kind, pred: readPrediction(await runPost(r, seq, dModel), K_) });
@@ -114,23 +150,6 @@ export default function SteeringLab() {
     if (!t) return;
     setActive({ text: t, input_ids: [GPT2_BOS, ...encode(t)].slice(0, 64) });
   };
-
-  if (err) return <Shell><div className="mono text-[var(--accent)] p-6">{err}</div></Shell>;
-  if (!K_ || !ready || !active) return <Shell><Loader load={load} /></Shell>;
-
-  const dialDay = nearestDay(theta, K_.day_angles_rad);
-  const predDay = pred?.topDay ?? 0;
-  const selectedCurated = prompts.findIndex((p) => p.text === active.text);
-  const refDay = baselinePred?.topDay ?? predDay;
-  const overallIsDay = pred ? K_.days.some((d) => pred.overallTop.trim() === d) : true;
-
-  // signed day-distance in [-3..3] — how far the dial / prediction sit from the natural state
-  const baselineDay = nearestDay(baselineAngle, K_.day_angles_rad);
-  const sgn7 = (x: number) => { let d = ((x % 7) + 7) % 7; if (d > 3) d -= 7; return d; };
-  const rotSteps = sgn7(dialDay - baselineDay);
-  const predSteps = sgn7(predDay - refDay);
-  const fmt = (n: number) => (n > 0 ? `+${n}` : `${n}`);
-  const dayWord = (n: number) => `${Math.abs(n)} day${Math.abs(n) === 1 ? "" : "s"}`;
 
   return (
     <Shell>
@@ -144,9 +163,9 @@ export default function SteeringLab() {
           </h1>
           <p className="serif text-[19px] leading-[1.5] text-[var(--ink-2)]">
             GPT-2 small stores the days of the week on a <em>circle</em> in its residual
-            stream, and predicts the next day by <em>rotating around it</em>. Turn the dial:
-            you rotate the model's internal state, and its next-token guess walks around the
-            week in lockstep — one step ahead of wherever you point.
+            stream, and predicts the next day by <em>rotating around it</em>. Steer that circle
+            by a few days and the model's next-word prediction moves by the same amount — a
+            causal handle on how it computes succession.
           </p>
         </header>
 
@@ -164,7 +183,6 @@ export default function SteeringLab() {
               </span>
             </figcaption>
 
-            {/* the input — fixed */}
             <div className="rounded-[8px] px-3 py-2 mb-1" style={{ border: "1px solid var(--canvas-rule-2)" }}>
               <div className="mono text-[10px] tracking-[0.14em] uppercase text-[var(--canvas-ink-faint)] mb-1">
                 prompt · the text never changes
@@ -175,51 +193,57 @@ export default function SteeringLab() {
             <div className="flex justify-center py-1">
               <DayCircle
                 days={K_.days}
-                angles={K_.day_angles_rad}
+                angles={angles}
                 theta={theta}
                 baselineAngle={baselineAngle}
                 topDay={predDay}
                 dayProbs={pred?.dayProbs ?? K_.days.map(() => 0)}
-                onTheta={onTheta}
+                onTheta={onDragAngle}
               />
             </div>
 
             <p className="text-center mono text-[10px] tracking-[0.12em] uppercase text-[var(--canvas-ink-faint)] -mt-1 mb-3">
-              drag the handle to rotate GPT-2's internal day-of-week
+              drag the handle — or use −/+ — to rotate GPT-2's internal day
             </p>
 
-            {/* the causal chain: internal state → prediction */}
-            <div className="text-center">
-              <div className="mono text-[10px] tracking-[0.14em] uppercase text-[var(--canvas-ink-faint)]">GPT-2 now reads the day as</div>
-              <div className="serif text-[26px] leading-tight text-[var(--canvas-ink)]">{K_.days[dialDay]}</div>
-              <div className="text-[var(--canvas-ink-faint)] my-0.5">↓</div>
-              <div className="mono text-[10px] tracking-[0.14em] uppercase text-[var(--canvas-ink-faint)]">so its next word becomes</div>
-              <div className="serif text-[26px] leading-tight" style={{ color: "var(--accent-soft)" }}>{K_.days[predDay]}</div>
+            {/* the steering counter — the intervention magnitude */}
+            <div className="flex items-center justify-center gap-5 mb-4">
+              <RoundBtn onClick={() => applySteer(steer - 1)} disabled={steer <= -MAX_STEER}>−</RoundBtn>
+              <div className="text-center min-w-[140px]">
+                <div className="mono text-[10px] tracking-[0.16em] uppercase text-[var(--canvas-ink-faint)]">steering</div>
+                <div className="serif text-[26px] leading-tight" style={{ color: steer === 0 ? "var(--canvas-ink-dim)" : "var(--accent-soft)" }}>
+                  {steer === 0 ? "natural" : `${steerLabel(steer)}`}
+                </div>
+              </div>
+              <RoundBtn onClick={() => applySteer(steer + 1)} disabled={steer >= MAX_STEER}>+</RoundBtn>
             </div>
 
-            <div className="mt-3 text-center mono text-[11px] leading-relaxed">
-              {rotSteps === 0 ? (
-                <span className="text-[var(--canvas-ink-faint)]">
-                  this is the model's natural prediction — now rotate the dial to intervene
-                </span>
+            {/* natural → steered prediction */}
+            <div className="text-center">
+              {steer === 0 ? (
+                <p className="mono text-[11px] text-[var(--canvas-ink-faint)] leading-relaxed">
+                  GPT-2's natural next word is{" "}
+                  <span className="serif text-[18px] text-[var(--canvas-ink)] align-middle">{K_.days[refDay]}</span>
+                  {" "}· steer the circle to push it around the week
+                </p>
               ) : (
                 <>
-                  <div className="text-[var(--canvas-ink-faint)]">
-                    · untouched, it would predict {baselinePred ? K_.days[baselinePred.topDay] : "…"}
+                  <div className="mono text-[10px] tracking-[0.14em] uppercase text-[var(--canvas-ink-faint)]">
+                    natural was {K_.days[refDay]} — now GPT-2 predicts
                   </div>
-                  <div style={{ color: "var(--accent-soft)" }}>
-                    ▸ you rotated {fmt(rotSteps)} {dayWord(rotSteps)} · the prediction moved {fmt(predSteps)}
+                  <div className="serif text-[30px] leading-tight" style={{ color: "var(--accent-soft)" }}>{K_.days[predDay]}</div>
+                  <div className="mono text-[11px] mt-1" style={{ color: tracking ? "var(--accent-soft)" : "var(--canvas-ink-faint)" }}>
+                    {tracking
+                      ? `▸ steered ${steerLabel(steer)} · prediction moved ${fmt(predShift)} — in lockstep`
+                      : `▸ steered ${steerLabel(steer)} · expected ${K_.days[mod7(refDay + steer)]}, got ${K_.days[predDay]} — the weekend seam`}
                   </div>
+                  <p className="mt-3 serif text-[13px] italic text-[var(--canvas-ink-dim)] max-w-[430px] mx-auto leading-snug">
+                    The words never changed — you rotated a circle inside layer {K_.layer}, and the
+                    prediction followed.
+                  </p>
                 </>
               )}
             </div>
-
-            {rotSteps !== 0 && (
-              <p className="mt-3 text-center serif text-[13px] italic text-[var(--canvas-ink-dim)] max-w-[430px] mx-auto leading-snug">
-                The words never changed — you moved a circle inside layer {K_.layer}, and the model's
-                prediction followed.
-              </p>
-            )}
           </figure>
 
           <aside className="space-y-7">
@@ -252,22 +276,14 @@ export default function SteeringLab() {
                 </form>
                 {selectedCurated < 0 && (
                   <p className="mono text-[10.5px] text-[var(--ink-faint)] leading-snug">
-                    custom prompt — the rotation still acts on the final token, but the
-                    lockstep is cleanest on day-sequence prompts.
+                    custom prompt — steering still acts on the final token, but the effect is
+                    cleanest on day-sequence prompts.
                   </p>
                 )}
               </div>
             </Field>
 
-            <Field label="Rotate the internal day">
-              <div className="flex gap-2">
-                <Btn onClick={() => stepDay(-1)}>−1 day</Btn>
-                <Btn onClick={() => stepDay(1)}>+1 day</Btn>
-                <Btn onClick={() => onTheta(baselineAngle)} subtle>natural</Btn>
-              </div>
-            </Field>
-
-            <Field label="Predicted next day">
+            <Field label="Predicted next word">
               <Bars days={K_.days} probs={pred?.dayProbs ?? K_.days.map(() => 0)} top={predDay} />
               {pred && !overallIsDay && (
                 <p className="mono text-[11px] text-[var(--ink-faint)] mt-2 leading-snug">
@@ -287,7 +303,7 @@ export default function SteeringLab() {
               <input type="range" min={0} max={1.5} step={0.05} value={offPlane}
                      onChange={(e) => onOff(Number(e.target.value))} className="w-full accent-[var(--accent)]" />
               <p className="text-[12px] text-[var(--ink-dim)] leading-snug mt-2">
-                The rotation only ever touches the 2-D day-circle. This sets how much of the
+                Steering only ever touches the 2-D day-circle. This sets how much of the
                 residual's <em>off-circle</em> content rides along: <strong>isolate&nbsp;(0)</strong> drops the
                 competing signal for a crisp result; <strong>preserve&nbsp;(1)</strong> is the untouched
                 residual. Push past 1 to amplify and watch it break.
@@ -296,7 +312,7 @@ export default function SteeringLab() {
 
             <Field label="Is the circle necessary?">
               <p className="text-[12px] text-[var(--ink-dim)] leading-snug mb-3">
-                Rotating shows the circle can <em>steer</em> the answer (sufficiency). This removes
+                Steering shows the circle can <em>move</em> the answer (sufficiency). This removes
                 a 2-D subspace and re-runs the model: kill the day-circle and the prediction
                 should break — kill a random plane of the same size and it shouldn't.
               </p>
@@ -386,6 +402,20 @@ function Btn({ children, onClick, subtle }: { children: React.ReactNode; onClick
   );
 }
 
+function RoundBtn({ children, onClick, disabled }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button onClick={onClick} disabled={disabled}
+            className="w-11 h-11 rounded-full serif text-[22px] leading-none transition-colors flex items-center justify-center"
+            style={{
+              border: `1px solid ${disabled ? "var(--canvas-ink-faint)" : "var(--accent)"}`,
+              color: disabled ? "var(--canvas-ink-faint)" : "var(--accent-soft)",
+              opacity: disabled ? 0.4 : 1,
+            }}>
+      {children}
+    </button>
+  );
+}
+
 function Bars({ days, probs, top }: { days: string[]; probs: number[]; top: number }) {
   const max = Math.max(0.0001, ...probs);
   return (
@@ -417,7 +447,7 @@ function MethodsPanel({ K }: { K: SteerConstants }) {
             GPT-2 small is split in two at <span className="mono">blocks.{K.layer}.hook_resid_pre</span> and
             exported to ONNX: an <em>encoder</em> (embeddings + blocks 0–{K.layer - 1}) and a
             <em> decoder</em> (block {K.layer} + final norm + unembed). Both run client-side via
-            ONNX Runtime Web — the encoder once per prompt, the decoder on every dial-turn. The
+            ONNX Runtime Web — the encoder once per prompt, the decoder on every steer. The
             rotation, projection and ablation are plain JS on the residual between the halves.
           </p>
         </div>
@@ -426,7 +456,7 @@ function MethodsPanel({ K }: { K: SteerConstants }) {
           <ul className="space-y-1.5">
             <li>· split round-trips against TransformerLens to <span className="mono">cosine 0.99999</span> (max-abs-diff ~3e-5).</li>
             <li>· the in-browser rotation matches the TransformerLens patched result to the same tolerance.</li>
-            <li>· rotation → succession lockstep holds <span className="mono">6/7</span> days (Sun→Mon is the honest miss).</li>
+            <li>· steer → prediction-shift tracks for <span className="mono">6/7</span> days (the Sat→Sun→Mon seam is the honest miss).</li>
             <li>· ablating the circle removes <span className="mono">~56%</span> of the successor probability; a matched random plane removes <span className="mono">~0%</span>.</li>
           </ul>
         </div>
