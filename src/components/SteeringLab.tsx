@@ -124,6 +124,14 @@ export default function SteeringLab() {
   const refDay = baselinePred?.topDay ?? predDay;
   const overallIsDay = pred ? K_.days.some((d) => pred.overallTop.trim() === d) : true;
 
+  // signed day-distance in [-3..3] — how far the dial / prediction sit from the natural state
+  const baselineDay = nearestDay(baselineAngle, K_.day_angles_rad);
+  const sgn7 = (x: number) => { let d = ((x % 7) + 7) % 7; if (d > 3) d -= 7; return d; };
+  const rotSteps = sgn7(dialDay - baselineDay);
+  const predSteps = sgn7(predDay - refDay);
+  const fmt = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+  const dayWord = (n: number) => `${Math.abs(n)} day${Math.abs(n) === 1 ? "" : "s"}`;
+
   return (
     <Shell>
       <div className="mx-auto max-w-[1180px] px-6 pb-24">
@@ -156,7 +164,15 @@ export default function SteeringLab() {
               </span>
             </figcaption>
 
-            <div className="flex justify-center py-2">
+            {/* the input — fixed */}
+            <div className="rounded-[8px] px-3 py-2 mb-1" style={{ border: "1px solid var(--canvas-rule-2)" }}>
+              <div className="mono text-[10px] tracking-[0.14em] uppercase text-[var(--canvas-ink-faint)] mb-1">
+                prompt · the text never changes
+              </div>
+              <div className="mono text-[12.5px] text-[var(--canvas-ink-dim)] break-words">{active.text}</div>
+            </div>
+
+            <div className="flex justify-center py-1">
               <DayCircle
                 days={K_.days}
                 angles={K_.day_angles_rad}
@@ -168,14 +184,42 @@ export default function SteeringLab() {
               />
             </div>
 
-            <div className="flex items-center justify-center gap-5 mt-2 mb-1">
-              <Readout label="you point at" value={K_.days[dialDay]} />
-              <span className="text-[var(--accent)] text-2xl leading-none">→</span>
-              <Readout label="model predicts" value={K_.days[predDay]} accent />
-            </div>
-            <p className="text-center mono text-[11px] text-[var(--canvas-ink-faint)] mt-3">
-              drag the coral handle · or step a whole day below
+            <p className="text-center mono text-[10px] tracking-[0.12em] uppercase text-[var(--canvas-ink-faint)] -mt-1 mb-3">
+              drag the handle to rotate GPT-2's internal day-of-week
             </p>
+
+            {/* the causal chain: internal state → prediction */}
+            <div className="text-center">
+              <div className="mono text-[10px] tracking-[0.14em] uppercase text-[var(--canvas-ink-faint)]">GPT-2 now reads the day as</div>
+              <div className="serif text-[26px] leading-tight text-[var(--canvas-ink)]">{K_.days[dialDay]}</div>
+              <div className="text-[var(--canvas-ink-faint)] my-0.5">↓</div>
+              <div className="mono text-[10px] tracking-[0.14em] uppercase text-[var(--canvas-ink-faint)]">so its next word becomes</div>
+              <div className="serif text-[26px] leading-tight" style={{ color: "var(--accent-soft)" }}>{K_.days[predDay]}</div>
+            </div>
+
+            <div className="mt-3 text-center mono text-[11px] leading-relaxed">
+              {rotSteps === 0 ? (
+                <span className="text-[var(--canvas-ink-faint)]">
+                  this is the model's natural prediction — now rotate the dial to intervene
+                </span>
+              ) : (
+                <>
+                  <div className="text-[var(--canvas-ink-faint)]">
+                    · untouched, it would predict {baselinePred ? K_.days[baselinePred.topDay] : "…"}
+                  </div>
+                  <div style={{ color: "var(--accent-soft)" }}>
+                    ▸ you rotated {fmt(rotSteps)} {dayWord(rotSteps)} · the prediction moved {fmt(predSteps)}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {rotSteps !== 0 && (
+              <p className="mt-3 text-center serif text-[13px] italic text-[var(--canvas-ink-dim)] max-w-[430px] mx-auto leading-snug">
+                The words never changed — you moved a circle inside layer {K_.layer}, and the model's
+                prediction followed.
+              </p>
+            )}
           </figure>
 
           <aside className="space-y-7">
@@ -215,11 +259,11 @@ export default function SteeringLab() {
               </div>
             </Field>
 
-            <Field label="Step the dial">
+            <Field label="Rotate the internal day">
               <div className="flex gap-2">
-                <Btn onClick={() => stepDay(-1)}>− one day</Btn>
-                <Btn onClick={() => stepDay(1)}>+ one day</Btn>
-                <Btn onClick={() => onTheta(baselineAngle)} subtle>reset</Btn>
+                <Btn onClick={() => stepDay(-1)}>−1 day</Btn>
+                <Btn onClick={() => stepDay(1)}>+1 day</Btn>
+                <Btn onClick={() => onTheta(baselineAngle)} subtle>natural</Btn>
               </div>
             </Field>
 
@@ -320,15 +364,6 @@ function Loader({ load }: { load: LoadProgress | null }) {
         <div className="h-full transition-[width] duration-200" style={{ width: `${pct}%`, background: "var(--accent)" }} />
       </div>
       <p className="mono text-[11px] text-[var(--ink-faint)] mt-3">{pct}% · one-time download, then cached by your browser</p>
-    </div>
-  );
-}
-
-function Readout({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className="text-center">
-      <div className="mono text-[10px] tracking-[0.14em] uppercase text-[var(--canvas-ink-faint)] mb-1">{label}</div>
-      <div className="serif text-[24px] leading-none" style={{ color: accent ? "var(--accent-soft)" : "var(--canvas-ink)" }}>{value}</div>
     </div>
   );
 }
